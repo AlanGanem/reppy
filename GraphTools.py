@@ -25,6 +25,7 @@ def inverse_logn_frequency(X: float, base: float) -> float:
 def build_graph(
         data: pd.DataFrame,
         entity_classes: List[str],
+        feature_classes: List[str],
         use_global_info: bool = True,
         global_info_agg_function: Union[str, Callable] = 'idf',
         entity_agg_function: Union[str, Callable] = 'sum',
@@ -36,25 +37,31 @@ def build_graph(
     # _INDEXINFO is the column containing the index value (edge) used to map from graph back to tabular data
     SPECIAL_NAMES = ['_LOCALINFO', '_INDEXINFO', '_GLOBALINFO']
     # VALID_DEFAULT_GLOBAL_INFO= ['tf', 'tf_idf']
-
+        
     # perform input checks
     var_checks(
-        data=data,
+        data=data[entity_classes+feature_classes],
         SPECIAL_NAMES=SPECIAL_NAMES,
-        entity_classes=entity_classes
+        entity_classes=entity_classes+feature_classes,
     )
 
+    if not feature_classes:
+        combinations = list(itertools.combinations(entity_classes,2))
+    else:
+        entity_classes = list(set(entity_classes) - set(feature_classes))
+        combinations = list(itertools.product(entity_classes, feature_classes))
     # assert entities are strings
     data.loc[:, entity_classes] = data.loc[:, entity_classes].astype(str)
 
     # create combinations to build multipartite(by class) entities graph
-    combinations = list(itertools.combinations(entity_classes, 2))
+
+
     data['_LOCALINFO'] = 1
 
     # create global_information df
     global_property_df = get_global_entity_properties(
         data=data,
-        entity_classes=entity_classes,
+        entity_classes=entity_classes+feature_classes,
         global_info_agg_function=global_info_agg_function,
         idf_log_base=2
     )
@@ -98,14 +105,16 @@ def get_local_edge_properties(
     cter = data[list(combination) + [dummy_count_col]].groupby(list(combination), as_index=False)
 
     if entity_agg_function.__class__ == str:
-        cter = getattr(cter, entity_agg_function)()
+        if entity_agg_function == 'binary':
+            cter = cter.sum()
+            cter[dummy_count_col] = 1
+        else:
+            cter = getattr(cter, entity_agg_function)()
 
     # custom entity_agg_function takes a dataframe of single edges and outputs a float
     elif callable(entity_agg_function):
         cter = cter.apply(entity_agg_function)
 
-    if entity_agg_function == 'binary':
-        cter[dummy_count_col] = 1
 
     cter['_INDEXINFO'] = cter.index
 
@@ -197,7 +206,7 @@ def var_checks(
                 invalid_entity_classes))
 
     entities_check = set(data[entity_classes].values.flatten())
-    invalid_entities = [i for i in entities_check if (' ' in i) or ('__' in i)]
+    invalid_entities = [i for i in entities_check if ('  ' in i) or ('__' in i)]
     if invalid_entities:
         raise ValueError(
             'an entity name should not contain blank spaces or double underscores "__". rename "{}"'.format(
@@ -237,18 +246,17 @@ def get_global_entity_properties(
 
     return globalinfo
 
-def df_to_node(data, entity_classes):
-
+def df_to_node(data, entity_classes,sep = '__'):
+    data = data.copy()
     SPECIAL_NAMES = ['_LOCALINFO', '_INDEXINFO', '_GLOBALINFO']
     var_checks(
-            data,
+            data[entity_classes],
             SPECIAL_NAMES,
             entity_classes,
     )
 
-    data = data.copy()
     for col in entity_classes:
-        data.loc[:,col] = '{}__'.format(col) + data[col]
+        data.loc[:,col] = '{}{}'.format(col,sep) + data[col]
     nodes = data[entity_classes].apply(tuple,axis = 1)
     return nodes
 
